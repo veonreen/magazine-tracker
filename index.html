@@ -244,10 +244,12 @@
     <div class="step-body">
       <div id="reader"></div>
       <button class="btn-secondary" id="scanToggleBtn" onclick="toggleScanner()">📷 Start Camera</button>
+      <div id="scanStatus" style="font-size:12px;color:var(--text-muted);margin-top:8px;min-height:16px"></div>
       <div class="barcode-pill" id="barcodeDisplay" style="display:none"></div>
       <div style="margin-top:10px">
         <input type="text" id="manualBarcodeInput" placeholder="Or type barcode manually">
         <button class="btn-ghost" onclick="useManualBarcode()">Use this barcode →</button>
+        <div id="manualWarning" style="font-size:12px;color:var(--sindoor);display:none;margin-top:2px"></div>
       </div>
     </div>
   </div>
@@ -308,6 +310,11 @@ let scannedBarcode = '';
 let html5QrCode = null;
 let scannerRunning = false;
 let sessionLog = [];
+
+// India Post registered article barcode format: 2 letters + 9 digits + "IN"
+const BARCODE_PATTERN = /^[A-Z]{2}\d{9}IN$/;
+let scanCandidate = null;
+let scanCandidateCount = 0;
 
 window.onload = function () { refreshData(); };
 
@@ -371,20 +378,56 @@ function toggleScanner() {
       qrbox: { width: 300, height: 130 },
       experimentalFeatures: { useBarCodeDetectorIfSupported: true }
     },
-    (decodedText) => {
-      setScannedBarcode(decodedText);
-      html5QrCode.stop().then(() => { scannerRunning = false; document.getElementById('scanToggleBtn').innerText = '📷 Start Camera'; });
-    },
+    (decodedText) => { handleRawScan(decodedText); },
     () => {}
   ).then(() => {
     scannerRunning = true;
+    scanCandidate = null;
+    scanCandidateCount = 0;
     document.getElementById('scanToggleBtn').innerText = '⏹ Stop Camera';
+    document.getElementById('scanStatus').innerText = '';
   }).catch(err => alert('Could not start camera: ' + err));
 }
 
+function handleRawScan(decodedText) {
+  const val = decodedText.trim().toUpperCase().replace(/\s+/g, '');
+  const statusEl = document.getElementById('scanStatus');
+
+  if (!BARCODE_PATTERN.test(val)) {
+    // Doesn't match India Post format (2 letters + 9 digits + IN) — ignore, keep scanning
+    statusEl.innerText = 'Reading… point steadily at the barcode';
+    return;
+  }
+
+  if (val === scanCandidate) {
+    scanCandidateCount++;
+  } else {
+    scanCandidate = val;
+    scanCandidateCount = 1;
+  }
+
+  if (scanCandidateCount >= 2) {
+    // Confirmed with two matching consecutive reads
+    scanCandidate = null;
+    scanCandidateCount = 0;
+    statusEl.innerText = '';
+    setScannedBarcode(val);
+    html5QrCode.stop().then(() => { scannerRunning = false; document.getElementById('scanToggleBtn').innerText = '📷 Start Camera'; });
+  } else {
+    statusEl.innerText = 'Got a read, confirming…';
+  }
+}
+
 function useManualBarcode() {
-  const val = document.getElementById('manualBarcodeInput').value.trim();
+  const val = document.getElementById('manualBarcodeInput').value.trim().toUpperCase().replace(/\s+/g, '');
   if (!val) return;
+  const warnEl = document.getElementById('manualWarning');
+  if (!BARCODE_PATTERN.test(val)) {
+    warnEl.style.display = 'block';
+    warnEl.innerText = 'This doesn\'t match the usual format (2 letters + 9 digits + IN). Double-check before continuing.';
+  } else {
+    warnEl.style.display = 'none';
+  }
   setScannedBarcode(val);
 }
 
@@ -487,6 +530,8 @@ function resetForNextScan() {
   selectedCustomer = null;
   document.getElementById('barcodeDisplay').style.display = 'none';
   document.getElementById('manualBarcodeInput').value = '';
+  document.getElementById('manualWarning').style.display = 'none';
+  document.getElementById('scanStatus').innerText = '';
   document.getElementById('nameSearchInput').value = '';
   document.getElementById('searchResults').innerHTML = '';
   document.getElementById('selectedCustomerBox').innerHTML = '';
